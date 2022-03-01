@@ -115,4 +115,65 @@ boot_flag:
     out #0xA1,al
 ```  
 <font size=4>因为中断号是不能冲突的， Intel 把 0 到 0x19 号中断都作为**保留中断**，比如 0 号中断就规定为**除零异常**，软件自定义的中断都应该放在这之后，但是 IBM 在原 PC 机中搞砸了，跟保留中断号发生了冲突，以后也没有纠正过来，所以我们得重新对其进行编程，不得不做，却又一点意思也没有。这是 Linus 在上面注释上的原话。</font>  
-<font size=4>所以我们也不必在意，只要知道重新编程之后，8259 这个芯片的引脚与中断号的对应关系，变成了如下的样子就好。</font>
+<font size=4>所以我们也不必在意，只要知道重新编程之后，8259 这个芯片的引脚与中断号的对应关系，变成了如下的样子就好。</font>  
+PIC 请求号 | 中断号 | 用途
+-|-|-
+IRQ0 | 0x20 | 时钟中断
+IRQ1 | 0x21 | 键盘中断
+IRQ2 | 0x22 | 接连从芯片
+IRQ3 | 0x23 | 串口2
+IRQ4 | 0x24 | 串口1
+IRQ5|0x25	|并口2
+IRQ6|	0x26|	软盘驱动器
+IRQ7|	0x27|	并口1
+IRQ8|	0x28|	实时钟中断
+IRQ9|	0x29|	保留
+IRQ10|	0x2a|	保留
+IRQ11|	0x2b|	保留
+IRQ12|	0x2c|	鼠标中断
+IRQ13|	0x2d|	数学协处理器
+IRQ14|	0x2e|	硬盘中断
+IRQ15|	0x2f|	保留
+
+## 切换模式
+<font size=4>接下来就是真正的切换模式了</font>
+```
+mov ax,#0x0001  ; protected mode (PE) bit
+lmsw ax      ; This is it;
+jmpi 0,8     ; jmp offset 0 of segment 8 (cs)
+```  
+<font size=4>前两行，将ax赋值0x0001，再将这个值 lmsw --加载机器状态字，也就是改变cr0寄存器的值，末位改成1，如图：</font>
+![33](https://raw.githubusercontent.com/TenHianPic/Picgo/main/Linux/33.png)  
+<font size=4>所以真正的模式切换十分简单，重要的是之前做的准备工作。</font>  
+<font size=4>再往后，又是一个段间跳转指令 jmpi，后面的 8 表示 cs（代码段寄存器）的值，0 表示偏移地址。请注意，此时已经是保护模式了，之前也说过，保护模式下内存寻址方式变了，段寄存器里的值被当做段选择子。<br>回顾一下段选择子的结构</font>  
+![27](https://raw.githubusercontent.com/TenHianPic/Picgo/main/Linux/27.png)  
+<font size=4>将8转换成2进制00000,0000,0000,1000则得到**描述符索引**值为1，TI为0，RPL为0。</font>  
+<font size=4>我们拿着**描述符索引**去**全局描述符表（gdt）**中找第一项段描述符</font>  
+```
+gdt:
+    .word   0,0,0,0     ; dummy
+
+    .word   0x07FF      ; 8Mb - limit=2047 (2048*4096=8Mb)
+    .word   0x0000      ; base address=0
+    .word   0x9A00      ; code read/exec
+    .word   0x00C0      ; granularity=4096, 386
+
+    .word   0x07FF      ; 8Mb - limit=2047 (2048*4096=8Mb)
+    .word   0x0000      ; base address=0
+    .word   0x9200      ; data read/write
+    .word   0x00C0      ; granularity=4096, 386
+```  
+<font size=4>第 0 项是空值，第一项被表示为代码段描述符，是个可读可执行的段，第二项为数据段描述符，是个可读可写段，不过他们的段基址都是 0。既然段基址为0，偏移地址也为0，那就表示跳到物理地址0处执行，这里回顾一下之前的内存布局图：</font>  
+![32](https://raw.githubusercontent.com/TenHianPic/Picgo/main/Linux/32.png)  
+<font size=4>就是操作系统全部代码的 system 这个大模块，system 模块怎么生成的呢？由 Makefile 文件可知，是由 head.s 和 main.c 以及其余各模块的操作系统代码合并来的，可以理解为操作系统的全部核心代码编译后的结果。</font>  
+```
+tools/system: boot/head.o init/main.o \
+    $(ARCHIVES) $(DRIVERS) $(MATH) $(LIBS)
+    $(LD) $(LDFLAGS) boot/head.o init/main.o \
+    $(ARCHIVES) \
+    $(DRIVERS) \
+    $(MATH) \
+    $(LIBS) \
+    -o tools/system > System.map
+```  
+<font size=4>到这里setup.s就讲完了，我们下一章会继续讲head.s，这是最后的汇编代码，之后就是由C写成的main.c了</font>
